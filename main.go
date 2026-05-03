@@ -71,7 +71,7 @@ func main() {
 		commitCmd := flag.NewFlagSet("commit", flag.ExitOnError)
 		message := commitCmd.String("m", "Auto commit", "commit message")
 		commitCmd.Parse(os.Args[2:])
-		runCommit(*message)
+		runCommit(*message, commitCmd.Args())
 
 	case "log":
 		runLog()
@@ -119,11 +119,23 @@ func main() {
 }
 
 func printUsage() {
+	const green = "\x1b[32m"
+	const reset = "\x1b[0m"
+
 	if isJapanese() {
-		fmt.Println(`LIT
+		fmt.Print(`Lit by-mininium(iamthe000)
+
+` + green + `
+        __    _ __ 
+       / /   (_) /_
+      / /   / / __/
+     / /___/ / /_  
+    /_____/_/\__/  ` + reset + `
+               
+
 使用方法:
   lit init [-max <n>]      現在のディレクトリをプロジェクトとして初期化
-  lit commit -m "<msg>"    変更を保存
+  lit commit [-m "<msg>"] [files...]  指定ファイルだけ、または変更を保存
   lit log                  コミット履歴を表示
   lit ls                   初期化済みプロジェクト一覧を表示
   lit diff <id>            指定コミットとの差分を表示
@@ -133,10 +145,19 @@ func printUsage() {
 		return
 	}
 
-	fmt.Println(`LIT
+	fmt.Print(`Lit by-mininium(iamthe000)
+
+` + green + `
+        __    _ __ 
+       / /   (_) /_
+      / /   / / __/
+     / /___/ / /_  
+    /_____/_/\__/  ` + reset + `
+               
+
 Usage:
   lit init [-max <n>]      Initialize the current directory as a project
-  lit commit -m "<msg>"    Save changes
+  lit commit [-m "<msg>"] [files...]  Save only specified files or all changes
   lit log                  Show commit history
   lit ls                   List initialized projects
   lit diff <id>            Show diff against a commit
@@ -166,7 +187,7 @@ func runInit(maxVersions int) {
 	)
 }
 
-func runCommit(message string) {
+func runCommit(message string, targets []string) {
 	ensureInitialized()
 
 	config := Config{}
@@ -188,10 +209,18 @@ func runCommit(message string) {
 		os.Exit(1)
 	}
 
-	isFull := len(history) == 0
-	changedFiles, deletedFiles, err := buildCommitPayload(parentID, isFull)
+	isFull := len(history) == 0 && len(targets) == 0
+	changedFiles, deletedFiles, err := buildCommitPayload(parentID, isFull, targets)
 	if err != nil {
-		printLocalized(fmt.Sprintf("Commit failed: %v\n", err), fmt.Sprintf("コミットに失敗しました: %v\n", err))
+		if strings.HasPrefix(err.Error(), "target file not found: ") {
+			target := strings.TrimPrefix(err.Error(), "target file not found: ")
+			printLocalized(
+				fmt.Sprintf("Error: target '%s' was not found.\n", target),
+				fmt.Sprintf("エラー: 指定された対象 '%s' が見つかりません。\n", target),
+			)
+		} else {
+			printLocalized(fmt.Sprintf("Commit failed: %v\n", err), fmt.Sprintf("コミットに失敗しました: %v\n", err))
+		}
 		os.Exit(1)
 	}
 	for _, path := range changedFiles {
@@ -554,7 +583,7 @@ func runSetLanguage(lang string) {
 	fmt.Println("Output language set to English.")
 }
 
-func buildCommitPayload(parentID string, full bool) ([]string, []string, error) {
+func buildCommitPayload(parentID string, full bool, targets []string) ([]string, []string, error) {
 	currentFiles := map[string]string{}
 	if err := collectCurrentFiles(".", currentFiles); err != nil {
 		return nil, nil, err
@@ -572,15 +601,42 @@ func buildCommitPayload(parentID string, full bool) ([]string, []string, error) 
 		}
 	}
 
+	targetSet := map[string]bool{}
+	for _, target := range targets {
+		target = filepath.Clean(target)
+		if target == "." || target == string(filepath.Separator) {
+			continue
+		}
+		targetSet[target] = true
+	}
+
+	if len(targetSet) > 0 {
+		for target := range targetSet {
+			if _, ok := currentFiles[target]; ok {
+				continue
+			}
+			if _, ok := parentFiles[target]; ok {
+				continue
+			}
+			return nil, nil, fmt.Errorf("target file not found: %s", target)
+		}
+	}
+
 	var changed []string
 	var deleted []string
 
 	for path, hash := range currentFiles {
+		if len(targetSet) > 0 && !targetSet[path] {
+			continue
+		}
 		if parentHash, ok := parentFiles[path]; !ok || parentHash != hash || full {
 			changed = append(changed, path)
 		}
 	}
 	for path := range parentFiles {
+		if len(targetSet) > 0 && !targetSet[path] {
+			continue
+		}
 		if _, ok := currentFiles[path]; !ok {
 			deleted = append(deleted, path)
 		}
