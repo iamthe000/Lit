@@ -8,7 +8,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -645,7 +647,13 @@ func buildCommitPayload(parentID string, full bool, targets []string) ([]string,
 }
 
 func collectCurrentFiles(root string, files map[string]string) error {
-	return filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+	type fileJob struct {
+		relPath string
+		path    string
+	}
+
+	var jobs []fileJob
+	if err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
@@ -653,12 +661,75 @@ func collectCurrentFiles(root string, files map[string]string) error {
 		if err != nil {
 			return err
 		}
-		if relPath == "." || shouldIgnore(relPath, []string{LitDir, ".git", ".DS_Store"}) || info.IsDir() {
+		if relPath == "." || shouldIgnore(relPath, []string{LitDir, ".git", ".DS_Store", ".litignore"}) {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
 			return nil
 		}
-		files[relPath] = hashFile(path)
+		if info.IsDir() {
+			return nil
+		}
+		jobs = append(jobs, fileJob{relPath: relPath, path: path})
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+
+	if len(jobs) == 0 {
+		return nil
+	}
+
+	workerCount := runtime.NumCPU()
+	if workerCount < 2 {
+		workerCount = 2
+	}
+	jobCh := make(chan fileJob, len(jobs))
+	errCh := make(chan error, 1)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+
+	worker := func() {
+		defer wg.Done()
+		for job := range jobCh {
+			hash := hashFile(job.path)
+			if hash == "" {
+				select {
+				case errCh <- fmt.Errorf("failed to hash file: %s", job.path):
+				default:
+				}
+				return
+			}
+			mu.Lock()
+			files[job.relPath] = hash
+			mu.Unlock()
+		}
+	}
+
+	wg.Add(workerCount)
+	for i := 0; i < workerCount; i++ {
+		go worker()
+	}
+
+	for _, job := range jobs {
+		select {
+		case err := <-errCh:
+			close(jobCh)
+			wg.Wait()
+			return err
+		default:
+			jobCh <- job
+		}
+	}
+	close(jobCh)
+	wg.Wait()
+
+	select {
+	case err := <-errCh:
+		return err
+	default:
+		return nil
+	}
 }
 
 func materializeCommit(commitID string) (string, error) {
@@ -876,12 +947,24 @@ func registerProject() {
 }
 
 func copyDirectory(src, dst string, ignore []string) error {
-	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+	type copyJob struct {
+		src string
+		dst string
+	}
+
+	var jobs []copyJob
+	if err := filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
-		relPath, _ := filepath.Rel(src, path)
+		relPath, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
 		if relPath == "." || shouldIgnore(relPath, ignore) {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 
@@ -890,8 +973,61 @@ func copyDirectory(src, dst string, ignore []string) error {
 			return os.MkdirAll(dstPath, info.Mode())
 		}
 
-		return copyFile(path, dstPath)
-	})
+		jobs = append(jobs, copyJob{src: path, dst: dstPath})
+		return nil
+	}); err != nil {
+		return err
+	}
+
+	if len(jobs) == 0 {
+		return nil
+	}
+
+	workerCount := runtime.NumCPU()
+	if workerCount < 2 {
+		workerCount = 2
+	}
+	jobCh := make(chan copyJob, len(jobs))
+	errCh := make(chan error, 1)
+	var wg sync.WaitGroup
+
+	worker := func() {
+		defer wg.Done()
+		for job := range jobCh {
+			if err := copyFile(job.src, job.dst); err != nil {
+				select {
+				case errCh <- err:
+				default:
+				}
+				return
+			}
+		}
+	}
+
+	wg.Add(workerCount)
+	for i := 0; i < workerCount; i++ {
+		go worker()
+	}
+
+	for _, job := range jobs {
+		select {
+		case err := <-errCh:
+			close(jobCh)
+			wg.Wait()
+			return err
+		default:
+			jobCh <- job
+		}
+	}
+	close(jobCh)
+	wg.Wait()
+
+	select {
+	case err := <-errCh:
+		return err
+	default:
+		return nil
+	}
 }
 
 func copyFile(src, dst string) error {
@@ -915,9 +1051,13 @@ func copyFile(src, dst string) error {
 }
 
 func shouldIgnore(path string, ignoreList []string) bool {
+	path = filepath.Clean(path)
+	parts := strings.Split(path, string(filepath.Separator))
 	for _, ignore := range ignoreList {
-		if strings.HasPrefix(path, ignore) {
-			return true
+		for _, part := range parts {
+			if part == ignore {
+				return true
+			}
 		}
 	}
 	return false
