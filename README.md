@@ -1,4 +1,17 @@
-<img width="1877" height="1080" alt="logo" src="https://github.com/user-attachments/assets/83f7693c-c18d-41ba-baf5-b7968443a04d" />
+<div align="center">
+  
+----
+
+<img width="200" alt="logo" src="https://github.com/user-attachments/assets/83f7693c-c18d-41ba-baf5-b7968443a04d" />
+
+----
+
+[![License](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+[![Go Version](https://img.shields.io/badge/Go-1.16+-00ADD8?logo=go&logoColor=white)](https://golang.org/)
+
+----
+
+</div>
 
 # Lit
 
