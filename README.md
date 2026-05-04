@@ -1,3 +1,5 @@
+<img width="1877" height="1080" alt="logo" src="https://github.com/user-attachments/assets/83f7693c-c18d-41ba-baf5-b7968443a04d" />
+
 # Lit
 
 Lit は、現在のディレクトリを簡易的な「プロジェクト」として管理し、変更をスナップショット保存できる Go 製の軽量バージョン管理ツールです。
