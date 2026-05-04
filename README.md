@@ -188,6 +188,9 @@ lit en
 lit jp
 ```
 
+<img width="200" alt="image" src="https://github.com/user-attachments/assets/4d7b5722-7472-46e8-abfe-56c99fb1e6b2" /><br>
+↑初回起動の画面
+
 ## ライセンス
 
 このリポジトリにライセンスファイルがない場合は、必要に応じて追加してください。
